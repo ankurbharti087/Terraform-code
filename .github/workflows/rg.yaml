@@ -6,13 +6,13 @@ name: Terraform CI-CD
 
 on:
 
-  # Feature branch par code push hone par pipeline chalegi
+  # Feature branch par push
   push:
     branches:
       - "feature/**"
       - main
 
-  # PR created/updated towards main
+  # Pull Request towards main
   pull_request:
     branches:
       - main
@@ -31,22 +31,45 @@ permissions:
 # ============================================================
 
 env:
+
+  # Terraform version
   TF_VERSION: "1.9.8"
+
+  # IMPORTANT:
+  # Aapke Terraform .tf files "Dev Module" ke andar hain.
+  #
+  # Dev Module/
+  # ├── backend.tf
+  # ├── main.tf
+  # ├── provider.tf
+  # └── variable.tf
+  #
+  TF_WORKING_DIR: "./Dev Module"
 
 
 # ============================================================
 # JOB 1
 # FEATURE BRANCH
 #
-# feature/* push
-#       ↓
+# Feature Push
+#      ↓
+# Checkout
+#      ↓
 # Azure Login
-#       ↓
+#      ↓
+# Terraform Setup
+#      ↓
+# Verify Terraform Files
+#      ↓
+# Create TFVars
+#      ↓
 # Terraform Init
-#       ↓
+#      ↓
 # Terraform Validate
-#       ↓
+#      ↓
 # Terraform Plan
+#      ↓
+# Upload Plan
 # ============================================================
 
 jobs:
@@ -55,15 +78,15 @@ jobs:
 
     name: Terraform Plan - Feature
 
-    # Sirf feature branch par chalega
-    if: startsWith(github.ref, 'refs/heads/feature/')
+    # Sirf feature branch push par chalega
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/feature/')
 
     runs-on: ubuntu-latest
 
     steps:
 
       # --------------------------------------------------------
-      # Checkout Terraform Code
+      # 1. Checkout Repository
       # --------------------------------------------------------
 
       - name: Checkout Code
@@ -71,19 +94,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Azure Login
-      #
-      # AZURE_CREDENTIALS GitHub Secret mein JSON hoga
-      # --------------------------------------------------------
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-
-      # --------------------------------------------------------
-      # Install Terraform
+      # 2. Setup Terraform
       # --------------------------------------------------------
 
       - name: Setup Terraform
@@ -93,80 +104,204 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Create terraform.tfvars
+      # 3. Verify Repository Structure
+      # --------------------------------------------------------
+
+      - name: Verify Repository Structure
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo "Current Directory"
+          echo "=========================================="
+          pwd
+
+          echo ""
+          echo "=========================================="
+          echo "Repository Structure"
+          echo "=========================================="
+          ls -la
+
+          echo ""
+          echo "=========================================="
+          echo "Terraform Files"
+          echo "=========================================="
+          find . -name "*.tf" -type f
+
+
+      # --------------------------------------------------------
+      # 4. Verify Terraform Working Directory
+      # --------------------------------------------------------
+
+      - name: Verify Terraform Directory
+        shell: bash
+        run: |
+
+          if [ ! -d "${TF_WORKING_DIR}" ]; then
+            echo "ERROR: Terraform directory does not exist."
+            echo "Expected directory: ${TF_WORKING_DIR}"
+            exit 1
+          fi
+
+          echo "Terraform directory found:"
+          echo "${TF_WORKING_DIR}"
+
+          echo ""
+          echo "Terraform configuration files:"
+
+          find "${TF_WORKING_DIR}" -maxdepth 1 -name "*.tf" -type f
+
+
+      # --------------------------------------------------------
+      # 5. Verify Terraform Configuration
+      # --------------------------------------------------------
+
+      - name: Verify Terraform Configuration
+        shell: bash
+        run: |
+
+          TF_COUNT=$(find "${TF_WORKING_DIR}" -maxdepth 1 -name "*.tf" -type f | wc -l)
+
+          if [ "$TF_COUNT" -eq 0 ]; then
+            echo "ERROR: No Terraform configuration files found."
+            echo ""
+            echo "Terraform working directory:"
+            echo "${TF_WORKING_DIR}"
+            exit 1
+          fi
+
+          echo ""
+          echo "Found $TF_COUNT Terraform configuration file(s)."
+
+
+      # --------------------------------------------------------
+      # 6. Azure Login
+      # --------------------------------------------------------
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+
+      # --------------------------------------------------------
+      # 7. Create terraform.tfvars
       #
-      # Actual TFVars GitHub repository mein nahi hai.
-      # GitHub Secret se runtime par file create hogi.
+      # GitHub Secret:
+      #
+      # TERRAFORM_TFVARS
+      #
+      # Secret ko Dev Module directory mein create karenge.
       # --------------------------------------------------------
 
       - name: Create Terraform TFVars
         shell: bash
         env:
           TFVARS_CONTENT: ${{ secrets.TERRAFORM_TFVARS }}
+
         run: |
-          printf '%s' "$TFVARS_CONTENT" > terraform.tfvars
 
-
-      # --------------------------------------------------------
-      # Verify TFVars file exists
-      # --------------------------------------------------------
-
-      - name: Verify TFVars
-        shell: bash
-        run: |
-          if [ ! -f terraform.tfvars ]; then
-            echo "ERROR: terraform.tfvars was not created."
+          if [ -z "$TFVARS_CONTENT" ]; then
+            echo "ERROR: TERRAFORM_TFVARS GitHub Secret is empty."
             exit 1
           fi
+
+          printf '%s' "$TFVARS_CONTENT" > "${TF_WORKING_DIR}/terraform.tfvars"
 
           echo "terraform.tfvars created successfully."
 
 
       # --------------------------------------------------------
-      # Terraform Init
+      # 8. Verify TFVars
+      # --------------------------------------------------------
+
+      - name: Verify TFVars
+        shell: bash
+        run: |
+
+          if [ ! -f "${TF_WORKING_DIR}/terraform.tfvars" ]; then
+            echo "ERROR: terraform.tfvars was not created."
+            exit 1
+          fi
+
+          echo "terraform.tfvars exists."
+
+
+      # --------------------------------------------------------
+      # 9. Terraform Init
       # --------------------------------------------------------
 
       - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform init
 
 
       # --------------------------------------------------------
-      # Terraform Validate
+      # 10. Terraform Format Check
+      # --------------------------------------------------------
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check -recursive
+
+
+      # --------------------------------------------------------
+      # 11. Terraform Validate
       # --------------------------------------------------------
 
       - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform validate
 
 
       # --------------------------------------------------------
-      # Terraform Plan
+      # 12. Terraform Plan
       # --------------------------------------------------------
 
       - name: Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
           terraform plan \
             -var-file="terraform.tfvars" \
-            -out=tfplan
+            -out="tfplan"
 
 
       # --------------------------------------------------------
-      # Upload Terraform Plan
+      # 13. Verify Plan
+      # --------------------------------------------------------
+
+      - name: Verify Terraform Plan
+        shell: bash
+        run: |
+
+          if [ ! -f "${TF_WORKING_DIR}/tfplan" ]; then
+            echo "ERROR: tfplan file was not created."
+            exit 1
+          fi
+
+          echo "Terraform plan created successfully."
+
+
+      # --------------------------------------------------------
+      # 14. Upload Terraform Plan
       # --------------------------------------------------------
 
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan-feature-${{ github.run_id }}
-          path: tfplan
+          name: terraform-plan-feature-${{ github.sha }}
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
           retention-days: 1
 
 
   # ============================================================
   # JOB 2
-  # FEATURE BRANCH MANUAL APPROVAL
+  # FEATURE BRANCH APPROVAL
   #
-  # Plan ke baad approval
-  # Approval ke baad koi Apply nahi hoga
+  # Plan
+  #   ↓
+  # Manual Approval
+  #   ↓
+  # NO APPLY
   # ============================================================
 
   feature-approval:
@@ -175,6 +310,8 @@ jobs:
 
     needs:
       - terraform-plan-feature
+
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/feature/')
 
     runs-on: ubuntu-latest
 
@@ -185,40 +322,53 @@ jobs:
 
       - name: Feature Approval Completed
         run: |
-          echo "======================================"
-          echo "Feature branch Terraform plan approved"
+
+          echo "=========================================="
+          echo "Feature Branch Terraform Plan Approved"
+          echo "=========================================="
+
+          echo ""
           echo "No Terraform Apply will run."
-          echo "======================================"
+
+          echo ""
+          echo "Feature workflow completed."
 
 
   # ============================================================
   # JOB 3
-  # MAIN BRANCH
+  # MAIN BRANCH PLAN
   #
-  # main push / PR merge
-  #       ↓
+  # Main Push
+  #      ↓
+  # Checkout
+  #      ↓
   # Azure Login
-  #       ↓
+  #      ↓
+  # Terraform Setup
+  #      ↓
+  # Create TFVars
+  #      ↓
   # Terraform Init
-  #       ↓
-  # Terraform Validate
-  #       ↓
-  # Terraform Plan
+  #      ↓
+  # Validate
+  #      ↓
+  # Plan
+  #      ↓
+  # Upload Plan
   # ============================================================
 
   terraform-plan-main:
 
     name: Terraform Plan - Main
 
-    # Sirf main branch par chalega
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     runs-on: ubuntu-latest
 
     steps:
 
       # --------------------------------------------------------
-      # Checkout Code
+      # 1. Checkout Repository
       # --------------------------------------------------------
 
       - name: Checkout Code
@@ -226,17 +376,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Azure Login
-      # --------------------------------------------------------
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-
-      # --------------------------------------------------------
-      # Setup Terraform
+      # 2. Setup Terraform
       # --------------------------------------------------------
 
       - name: Setup Terraform
@@ -246,80 +386,153 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Create terraform.tfvars from GitHub Secret
+      # 3. Verify Terraform Files
+      # --------------------------------------------------------
+
+      - name: Verify Terraform Files
+        shell: bash
+        run: |
+
+          echo "Current directory:"
+          pwd
+
+          echo ""
+          echo "Terraform files:"
+          find . -name "*.tf" -type f
+
+
+      # --------------------------------------------------------
+      # 4. Verify Terraform Directory
+      # --------------------------------------------------------
+
+      - name: Verify Terraform Directory
+        shell: bash
+        run: |
+
+          if [ ! -d "${TF_WORKING_DIR}" ]; then
+            echo "ERROR: Terraform directory does not exist."
+            echo "Expected: ${TF_WORKING_DIR}"
+            exit 1
+          fi
+
+          TF_COUNT=$(find "${TF_WORKING_DIR}" -maxdepth 1 -name "*.tf" -type f | wc -l)
+
+          if [ "$TF_COUNT" -eq 0 ]; then
+            echo "ERROR: No Terraform .tf files found."
+            exit 1
+          fi
+
+          echo "Terraform configuration found."
+
+
+      # --------------------------------------------------------
+      # 5. Azure Login
+      # --------------------------------------------------------
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+
+      # --------------------------------------------------------
+      # 6. Create terraform.tfvars
       # --------------------------------------------------------
 
       - name: Create Terraform TFVars
         shell: bash
         env:
           TFVARS_CONTENT: ${{ secrets.TERRAFORM_TFVARS }}
+
         run: |
-          printf '%s' "$TFVARS_CONTENT" > terraform.tfvars
 
-
-      # --------------------------------------------------------
-      # Verify TFVars
-      # --------------------------------------------------------
-
-      - name: Verify TFVars
-        shell: bash
-        run: |
-          if [ ! -f terraform.tfvars ]; then
-            echo "ERROR: terraform.tfvars was not created."
+          if [ -z "$TFVARS_CONTENT" ]; then
+            echo "ERROR: TERRAFORM_TFVARS GitHub Secret is empty."
             exit 1
           fi
+
+          printf '%s' "$TFVARS_CONTENT" > "${TF_WORKING_DIR}/terraform.tfvars"
 
           echo "terraform.tfvars created successfully."
 
 
       # --------------------------------------------------------
-      # Terraform Init
+      # 7. Terraform Init
       # --------------------------------------------------------
 
       - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform init
 
 
       # --------------------------------------------------------
-      # Terraform Validate
+      # 8. Terraform Format Check
+      # --------------------------------------------------------
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check -recursive
+
+
+      # --------------------------------------------------------
+      # 9. Terraform Validate
       # --------------------------------------------------------
 
       - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform validate
 
 
       # --------------------------------------------------------
-      # Terraform Plan
+      # 10. Terraform Plan
       # --------------------------------------------------------
 
       - name: Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
           terraform plan \
             -var-file="terraform.tfvars" \
-            -out=tfplan
+            -out="tfplan"
 
 
       # --------------------------------------------------------
-      # Upload Plan
+      # 11. Verify Terraform Plan
+      # --------------------------------------------------------
+
+      - name: Verify Terraform Plan
+        shell: bash
+        run: |
+
+          if [ ! -f "${TF_WORKING_DIR}/tfplan" ]; then
+            echo "ERROR: tfplan file was not created."
+            exit 1
+          fi
+
+          echo "Terraform plan created successfully."
+
+
+      # --------------------------------------------------------
+      # 12. Upload Terraform Plan
       # --------------------------------------------------------
 
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan-main-${{ github.run_id }}
-          path: tfplan
+          name: terraform-plan-main-${{ github.sha }}
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
           retention-days: 1
 
 
   # ============================================================
   # JOB 4
-  # MAIN BRANCH
-  # MANUAL APPROVAL + TERRAFORM APPLY
+  # PRODUCTION APPROVAL + APPLY
   #
-  # Plan successful
-  #       ↓
-  # Production Approval
-  #       ↓
+  # Main Plan
+  #      ↓
+  # Prod Approval
+  #      ↓
+  # Download Same Plan
+  #      ↓
   # Terraform Apply
   # ============================================================
 
@@ -330,20 +543,33 @@ jobs:
     needs:
       - terraform-plan-main
 
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     runs-on: ubuntu-latest
 
-    # IMPORTANT:
-    # GitHub Environment "Prod" mein
-    # Required Reviewers configured hone chahiye.
+    # ==========================================================
+    # IMPORTANT
+    #
+    # GitHub Repository:
+    #
+    # Settings
+    #    ↓
+    # Environments
+    #    ↓
+    # Prod
+    #    ↓
+    # Required reviewers
+    #
+    # Configure approval here.
+    # ==========================================================
+
     environment:
       name: Prod
 
     steps:
 
       # --------------------------------------------------------
-      # Checkout Code
+      # 1. Checkout Repository
       # --------------------------------------------------------
 
       - name: Checkout Code
@@ -351,17 +577,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Azure Login
-      # --------------------------------------------------------
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-
-      # --------------------------------------------------------
-      # Setup Terraform
+      # 2. Setup Terraform
       # --------------------------------------------------------
 
       - name: Setup Terraform
@@ -371,59 +587,123 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Create Terraform TFVars
+      # 3. Verify Terraform Directory
+      # --------------------------------------------------------
+
+      - name: Verify Terraform Directory
+        shell: bash
+        run: |
+
+          if [ ! -d "${TF_WORKING_DIR}" ]; then
+            echo "ERROR: Terraform directory does not exist."
+            exit 1
+          fi
+
+          TF_COUNT=$(find "${TF_WORKING_DIR}" -maxdepth 1 -name "*.tf" -type f | wc -l)
+
+          if [ "$TF_COUNT" -eq 0 ]; then
+            echo "ERROR: No Terraform .tf files found."
+            exit 1
+          fi
+
+          echo "Terraform configuration found."
+
+
+      # --------------------------------------------------------
+      # 4. Azure Login
+      # --------------------------------------------------------
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+
+      # --------------------------------------------------------
+      # 5. Create terraform.tfvars
       # --------------------------------------------------------
 
       - name: Create Terraform TFVars
         shell: bash
         env:
           TFVARS_CONTENT: ${{ secrets.TERRAFORM_TFVARS }}
+
         run: |
-          printf '%s' "$TFVARS_CONTENT" > terraform.tfvars
+
+          if [ -z "$TFVARS_CONTENT" ]; then
+            echo "ERROR: TERRAFORM_TFVARS GitHub Secret is empty."
+            exit 1
+          fi
+
+          printf '%s' "$TFVARS_CONTENT" > "${TF_WORKING_DIR}/terraform.tfvars"
+
+          echo "terraform.tfvars created successfully."
 
 
       # --------------------------------------------------------
-      # Terraform Init
+      # 6. Terraform Init
       # --------------------------------------------------------
 
       - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform init
 
 
       # --------------------------------------------------------
-      # Download Terraform Plan
+      # 7. Download Terraform Plan
       # --------------------------------------------------------
 
       - name: Download Terraform Plan
         uses: actions/download-artifact@v4
         with:
-          name: terraform-plan-main-${{ github.run_id }}
-          path: .
+          name: terraform-plan-main-${{ github.sha }}
+          path: ${{ env.TF_WORKING_DIR }}
 
 
       # --------------------------------------------------------
-      # Check Plan File
+      # 8. Verify Terraform Plan
       # --------------------------------------------------------
 
       - name: Verify Terraform Plan
         shell: bash
         run: |
-          if [ ! -f tfplan ]; then
+
+          if [ ! -f "${TF_WORKING_DIR}/tfplan" ]; then
             echo "ERROR: tfplan file not found."
             exit 1
           fi
 
           echo "Terraform plan found."
 
+          ls -lh "${TF_WORKING_DIR}/tfplan"
+
 
       # --------------------------------------------------------
-      # Terraform Apply
+      # 9. Terraform Apply
       #
-      # Approval ke baad hi ye step execute hoga.
+      # IMPORTANT:
+      #
+      # Yahan terraform plan dobara nahi banega.
+      #
+      # Same saved tfplan apply hoga jo Plan Job mein bana tha.
       # --------------------------------------------------------
 
       - name: Terraform Apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
           terraform apply \
             -auto-approve \
             tfplan
+
+
+      # --------------------------------------------------------
+      # 10. Deployment Completed
+      # --------------------------------------------------------
+
+      - name: Deployment Completed
+        run: |
+
+          echo "=========================================="
+          echo "Terraform Apply Completed Successfully"
+          echo "=========================================="
+          

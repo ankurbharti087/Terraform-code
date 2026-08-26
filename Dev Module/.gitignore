@@ -1,0 +1,143 @@
+# ==========================================
+# Terraform
+# ==========================================
+
+# Terraform state files
+*.tfstate
+*.tfstate.*
+terraform.tfstate
+terraform.tfstate.*
+
+# Terraform crash logs
+crash.log
+crash.*.log
+
+# Terraform plan files
+*.tfplan
+*.tfplan.*
+tfplan
+tfplan.*
+
+# Terraform lock file
+# IMPORTANT: Usually DO NOT ignore this file.
+# Keep .terraform.lock.hcl in Git for provider version consistency.
+# .terraform.lock.hcl
+
+# Terraform working directory
+.terraform/
+.terraform.tfstate.lock.info
+
+
+# ==========================================
+# Terraform Variables / Secrets
+# ==========================================
+
+# Variable files containing sensitive information
+*.tfvars
+*.tfvars.json
+
+# If you have a non-sensitive example file, keep it
+!terraform.tfvars.example
+!*.tfvars.example
+
+
+# ==========================================
+# Terraform Override Files
+# ==========================================
+
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+
+# ==========================================
+# Terraform CLI Configuration
+# ==========================================
+
+.terraformrc
+terraform.rc
+
+
+# ==========================================
+# Azure / Cloud Credentials
+# ==========================================
+
+# Azure CLI credentials
+.azure/
+
+# Service principal / credential files
+*.pem
+*.key
+*.pfx
+*.crt
+*.cer
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+
+# ==========================================
+# Secrets
+# ==========================================
+
+# Common secret files
+secrets.tfvars
+secret.tfvars
+credentials.tfvars
+secrets.json
+credentials.json
+
+# Private keys
+*.private.key
+*.private.pem
+
+
+# ==========================================
+# OS Generated Files
+# ==========================================
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+
+# Linux
+*~
+
+
+# ==========================================
+# IDE / Editor
+# ==========================================
+
+# Visual Studio Code
+.vscode/
+
+# IntelliJ / JetBrains
+.idea/
+
+# Terraform plugin files
+*.tfstate.backup
+
+
+# ==========================================
+# Logs
+# ==========================================
+
+*.log
+logs/
+
+
+# ==========================================
+# Temporary Files
+# ==========================================
+
+*.tmp
+*.temp
+*.swp
+*.swo

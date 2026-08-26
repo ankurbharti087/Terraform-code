@@ -1,60 +1,90 @@
 name: Terraform CI-CD
 
+# ============================================================
+# WORKFLOW TRIGGERS
+# ============================================================
+
 on:
+
+  # Feature branch par code push hone par pipeline chalegi
   push:
     branches:
       - "feature/**"
       - main
 
+  # PR created/updated towards main
   pull_request:
     branches:
       - main
 
+
+# ============================================================
+# PERMISSIONS
+# ============================================================
+
 permissions:
   contents: read
+
+
+# ============================================================
+# GLOBAL VARIABLES
+# ============================================================
 
 env:
   TF_VERSION: "1.9.8"
 
-jobs:
 
-  # ==========================================================
-  # FEATURE BRANCH
-  # ==========================================================
+# ============================================================
+# JOB 1
+# FEATURE BRANCH
+#
+# feature/* push
+#       ↓
+# Azure Login
+#       ↓
+# Terraform Init
+#       ↓
+# Terraform Validate
+#       ↓
+# Terraform Plan
+# ============================================================
+
+jobs:
 
   terraform-plan-feature:
 
     name: Terraform Plan - Feature
 
+    # Sirf feature branch par chalega
     if: startsWith(github.ref, 'refs/heads/feature/')
 
     runs-on: ubuntu-latest
 
     steps:
 
+      # --------------------------------------------------------
+      # Checkout Terraform Code
+      # --------------------------------------------------------
+
       - name: Checkout Code
         uses: actions/checkout@v4
 
 
-      # ------------------------------------------------------
-      # Azure Login using Customer Key / Client Secret
-      # ------------------------------------------------------
+      # --------------------------------------------------------
+      # Azure Login
+      #
+      # AZURE_CREDENTIALS GitHub Secret mein JSON hoga
+      # --------------------------------------------------------
 
       - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: |
-            {
-              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
-              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
-              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
-              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
-            }
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
 
-      # ------------------------------------------------------
-      # Terraform
-      # ------------------------------------------------------
+      # --------------------------------------------------------
+      # Install Terraform
+      # --------------------------------------------------------
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -62,113 +92,152 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
 
-      # ------------------------------------------------------
-      # Create terraform.tfvars from GitHub Secret
-      # ------------------------------------------------------
+      # --------------------------------------------------------
+      # Create terraform.tfvars
+      #
+      # Actual TFVars GitHub repository mein nahi hai.
+      # GitHub Secret se runtime par file create hogi.
+      # --------------------------------------------------------
 
-      - name: Create terraform.tfvars
+      - name: Create Terraform TFVars
+        shell: bash
         env:
           TFVARS_CONTENT: ${{ secrets.TERRAFORM_TFVARS }}
-
         run: |
           printf '%s' "$TFVARS_CONTENT" > terraform.tfvars
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
+      # Verify TFVars file exists
+      # --------------------------------------------------------
+
+      - name: Verify TFVars
+        shell: bash
+        run: |
+          if [ ! -f terraform.tfvars ]; then
+            echo "ERROR: terraform.tfvars was not created."
+            exit 1
+          fi
+
+          echo "terraform.tfvars created successfully."
+
+
+      # --------------------------------------------------------
       # Terraform Init
-      # ------------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Terraform Init
         run: terraform init
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       # Terraform Validate
-      # ------------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Terraform Validate
         run: terraform validate
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       # Terraform Plan
-      # ------------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Terraform Plan
-        run: terraform plan -var-file="terraform.tfvars" -out=tfplan
+        run: |
+          terraform plan \
+            -var-file="terraform.tfvars" \
+            -out=tfplan
 
 
-      # ------------------------------------------------------
-      # Upload Plan
-      # ------------------------------------------------------
+      # --------------------------------------------------------
+      # Upload Terraform Plan
+      # --------------------------------------------------------
 
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan-feature
+          name: terraform-plan-feature-${{ github.run_id }}
           path: tfplan
+          retention-days: 1
 
 
-  # ==========================================================
-  # FEATURE APPROVAL
-  # ==========================================================
+  # ============================================================
+  # JOB 2
+  # FEATURE BRANCH MANUAL APPROVAL
+  #
+  # Plan ke baad approval
+  # Approval ke baad koi Apply nahi hoga
+  # ============================================================
 
   feature-approval:
 
     name: Feature Branch Approval
 
-    needs: terraform-plan-feature
+    needs:
+      - terraform-plan-feature
 
     runs-on: ubuntu-latest
 
     environment:
-      name: feature-approval
+      name: Feature-Approval
 
     steps:
 
-      - name: Approval Completed
+      - name: Feature Approval Completed
         run: |
-          echo "Feature branch plan approved."
-          echo "No Terraform Apply will run for feature branch."
+          echo "======================================"
+          echo "Feature branch Terraform plan approved"
+          echo "No Terraform Apply will run."
+          echo "======================================"
 
 
-  # ==========================================================
+  # ============================================================
+  # JOB 3
   # MAIN BRANCH
-  # ==========================================================
+  #
+  # main push / PR merge
+  #       ↓
+  # Azure Login
+  #       ↓
+  # Terraform Init
+  #       ↓
+  # Terraform Validate
+  #       ↓
+  # Terraform Plan
+  # ============================================================
 
   terraform-plan-main:
 
     name: Terraform Plan - Main
 
+    # Sirf main branch par chalega
     if: github.ref == 'refs/heads/main'
 
     runs-on: ubuntu-latest
 
     steps:
 
+      # --------------------------------------------------------
+      # Checkout Code
+      # --------------------------------------------------------
+
       - name: Checkout Code
         uses: actions/checkout@v4
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       # Azure Login
-      # ------------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: |
-            {
-              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
-              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
-              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
-              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
-            }
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       # Setup Terraform
-      # ------------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -176,95 +245,124 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
 
-      # ------------------------------------------------------
-      # Create TFVars
-      # ------------------------------------------------------
+      # --------------------------------------------------------
+      # Create terraform.tfvars from GitHub Secret
+      # --------------------------------------------------------
 
-      - name: Create terraform.tfvars
+      - name: Create Terraform TFVars
+        shell: bash
         env:
           TFVARS_CONTENT: ${{ secrets.TERRAFORM_TFVARS }}
-
         run: |
           printf '%s' "$TFVARS_CONTENT" > terraform.tfvars
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
+      # Verify TFVars
+      # --------------------------------------------------------
+
+      - name: Verify TFVars
+        shell: bash
+        run: |
+          if [ ! -f terraform.tfvars ]; then
+            echo "ERROR: terraform.tfvars was not created."
+            exit 1
+          fi
+
+          echo "terraform.tfvars created successfully."
+
+
+      # --------------------------------------------------------
       # Terraform Init
-      # ------------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Terraform Init
         run: terraform init
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       # Terraform Validate
-      # ------------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Terraform Validate
         run: terraform validate
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       # Terraform Plan
-      # ------------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Terraform Plan
-        run: terraform plan -var-file="terraform.tfvars" -out=tfplan
+        run: |
+          terraform plan \
+            -var-file="terraform.tfvars" \
+            -out=tfplan
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       # Upload Plan
-      # ------------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan-main
+          name: terraform-plan-main-${{ github.run_id }}
           path: tfplan
+          retention-days: 1
 
 
-  # ==========================================================
-  # MAIN - APPROVAL + APPLY
-  # ==========================================================
+  # ============================================================
+  # JOB 4
+  # MAIN BRANCH
+  # MANUAL APPROVAL + TERRAFORM APPLY
+  #
+  # Plan successful
+  #       ↓
+  # Production Approval
+  #       ↓
+  # Terraform Apply
+  # ============================================================
 
   terraform-apply-main:
 
     name: Terraform Apply - Production
 
-    needs: terraform-plan-main
+    needs:
+      - terraform-plan-main
 
     if: github.ref == 'refs/heads/main'
 
     runs-on: ubuntu-latest
 
+    # IMPORTANT:
+    # GitHub Environment "Prod" mein
+    # Required Reviewers configured hone chahiye.
     environment:
-      name: production
+      name: Prod
 
     steps:
+
+      # --------------------------------------------------------
+      # Checkout Code
+      # --------------------------------------------------------
 
       - name: Checkout Code
         uses: actions/checkout@v4
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       # Azure Login
-      # ------------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: |
-            {
-              "clientId": "${{ secrets.CLIENT_ID }}",
-              "clientSecret": "${{ secrets.CLIENT_SECRET }}",
-              "subscriptionId": "${{ secrets.SUBSCRIPTIONS_ID }}",
-              "tenantId": "${{ secrets.TENANT_ID }}"
-            }
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       # Setup Terraform
-      # ------------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -272,40 +370,60 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
 
-      # ------------------------------------------------------
-      # Create TFVars
-      # ------------------------------------------------------
+      # --------------------------------------------------------
+      # Create Terraform TFVars
+      # --------------------------------------------------------
 
-      - name: Create terraform.tfvars
+      - name: Create Terraform TFVars
+        shell: bash
         env:
           TFVARS_CONTENT: ${{ secrets.TERRAFORM_TFVARS }}
-
         run: |
           printf '%s' "$TFVARS_CONTENT" > terraform.tfvars
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
       # Terraform Init
-      # ------------------------------------------------------
+      # --------------------------------------------------------
 
       - name: Terraform Init
         run: terraform init
 
 
-      # ------------------------------------------------------
-      # Download Plan
-      # ------------------------------------------------------
+      # --------------------------------------------------------
+      # Download Terraform Plan
+      # --------------------------------------------------------
 
       - name: Download Terraform Plan
         uses: actions/download-artifact@v4
         with:
-          name: terraform-plan-main
+          name: terraform-plan-main-${{ github.run_id }}
           path: .
 
 
-      # ------------------------------------------------------
+      # --------------------------------------------------------
+      # Check Plan File
+      # --------------------------------------------------------
+
+      - name: Verify Terraform Plan
+        shell: bash
+        run: |
+          if [ ! -f tfplan ]; then
+            echo "ERROR: tfplan file not found."
+            exit 1
+          fi
+
+          echo "Terraform plan found."
+
+
+      # --------------------------------------------------------
       # Terraform Apply
-      # ------------------------------------------------------
+      #
+      # Approval ke baad hi ye step execute hoga.
+      # --------------------------------------------------------
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan
+        run: |
+          terraform apply \
+            -auto-approve \
+            tfplan
